@@ -14,19 +14,23 @@ async def trading_loop():
     logger.info("Trading Loop Started")
     
     # Initial Setup
-    if not mt5_interface.initialize():
-        logger.critical("MT5 Initialization Failed. Exiting.")
-        return
-
-    account = mt5_interface.get_account_info()
-    if account:
-        risk_manager.set_daily_start_balance(account['balance'])
+    if mt5_interface.initialize():
+        account = mt5_interface.get_account_info()
+        if account:
+            risk_manager.set_daily_start_balance(account['balance'])
+    else:
+        logger.error("MT5 Initialization Failed. Trading loop will wait for connection.")
     
     last_analysis_time = 0
     ANALYSIS_INTERVAL = 1800 # 30 minutes in seconds
 
     while True:
         try:
+            # Heartbeat every ~1 minute
+            if int(time.time()) % 60 < 11:
+                status = "Trading Active" if telegram_bot.trading_enabled else "Trading Paused (Waiting for /on)"
+                logger.info(f"Heartbeat: {status}")
+
             # maintain connection
             if not mt5_interface.connected:
                  if not mt5_interface.initialize():
@@ -73,17 +77,17 @@ async def trading_loop():
                 # For short: profit = open - current
                 if pos['type'] == 0: # BUY
                     profit_points = current_price - open_price
-                    # Move to BE if profit > 50% of initial risk distance (approx)
-                    # We don't have the initial SL distance here easily, so we use a fixed point threshold or relative
-                    # For simplicity: if current SL is still below open price and we are in profit
-                    if current_sl < open_price and profit_points > (abs(tp - open_price) * 0.4):
+                    # Move to BE if profit > 40% of TP distance
+                    tp_dist = abs(tp - open_price) if tp > 0 else 0
+                    if tp_dist > 0 and current_sl < open_price and profit_points > (tp_dist * 0.4):
                         new_sl = open_price + (mt5_interface.get_symbol_info(symbol).point * 10) # BE + 1 pip
                         mt5_interface.modify_position(ticket, new_sl, tp)
                         logger.info(f"Moved BUY {symbol} to Break-Even")
                         
                 elif pos['type'] == 1: # SELL
                     profit_points = open_price - current_price
-                    if current_sl > open_price and profit_points > (abs(tp - open_price) * 0.4):
+                    tp_dist = abs(tp - open_price) if tp > 0 else 0
+                    if tp_dist > 0 and current_sl > open_price and profit_points > (tp_dist * 0.4):
                         new_sl = open_price - (mt5_interface.get_symbol_info(symbol).point * 10) # BE + 1 pip
                         mt5_interface.modify_position(ticket, new_sl, tp)
                         logger.info(f"Moved SELL {symbol} to Break-Even")
@@ -139,9 +143,6 @@ async def trading_loop():
             # M5 strategy -> check frequently enough to catch entry.
             await asyncio.sleep(10)
             
-            # Simple heartbeat every ~1 minute
-            if int(time.time()) % 60 < 10:
-                logger.info("Scanning markets for signals...")
 
         except Exception as e:
             logger.error(f"Error in trading loop: {e}")
@@ -152,10 +153,14 @@ async def main():
     tg_task = asyncio.create_task(telegram_bot.run())
     
     # Start Trading Loop
-    await trading_loop()
+    try:
+        await trading_loop()
+    except Exception as e:
+        logger.error(f"Trading loop crashed: {e}")
     
-    # Wait?
-    await tg_task
+    # Keep the task alive indefinitely for Telegram
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
 
