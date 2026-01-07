@@ -1,4 +1,8 @@
-import MetaTrader5 as mt5
+import sys
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    mt5 = None
 import pandas as pd
 from datetime import datetime
 from config import Config
@@ -10,6 +14,10 @@ class MT5Interface:
 
     def initialize(self):
         """Initializes connection to MT5 terminal."""
+        if mt5 is None:
+            logger.critical("MetaTrader5 library is NOT installed. Note: This library ONLY works on Windows.")
+            return False
+            
         if not mt5.initialize(path=Config.MT5_PATH):
             logger.error(f"MT5 initialize() failed, error code = {mt5.last_error()}")
             return False
