@@ -58,9 +58,39 @@ async def trading_loop():
                 last_analysis_time = current_time
             # ---------------------------------
 
+            # --- POSITION MANAGEMENT (Break-Even) ---
+            positions = mt5_interface.get_positions()
+            for pos in positions:
+                symbol = pos['symbol']
+                ticket = pos['ticket']
+                open_price = pos['price_open']
+                current_price = pos['price_current']
+                current_sl = pos['sl']
+                tp = pos['tp']
+                
+                # Calculate current profit in pips/points
+                # For long: profit = current - open
+                # For short: profit = open - current
+                if pos['type'] == 0: # BUY
+                    profit_points = current_price - open_price
+                    # Move to BE if profit > 50% of initial risk distance (approx)
+                    # We don't have the initial SL distance here easily, so we use a fixed point threshold or relative
+                    # For simplicity: if current SL is still below open price and we are in profit
+                    if current_sl < open_price and profit_points > (abs(tp - open_price) * 0.4):
+                        new_sl = open_price + (mt5_interface.get_symbol_info(symbol).point * 10) # BE + 1 pip
+                        mt5_interface.modify_position(ticket, new_sl, tp)
+                        logger.info(f"Moved BUY {symbol} to Break-Even")
+                        
+                elif pos['type'] == 1: # SELL
+                    profit_points = open_price - current_price
+                    if current_sl > open_price and profit_points > (abs(tp - open_price) * 0.4):
+                        new_sl = open_price - (mt5_interface.get_symbol_info(symbol).point * 10) # BE + 1 pip
+                        mt5_interface.modify_position(ticket, new_sl, tp)
+                        logger.info(f"Moved SELL {symbol} to Break-Even")
+            # ----------------------------------------
+
             for symbol in Config.SYMBOL_LIST:
                 # Check for existing positions?
-                positions = mt5_interface.get_positions()
                 symbol_positions = [p for p in positions if p['symbol'] == symbol]
                 
                 # Simple rule: Only 1 trade per symbol at a time

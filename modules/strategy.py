@@ -84,31 +84,41 @@ class Strategy:
             fast_cross_up = (prev['EMA_Fast'] <= prev['EMA_Slow']) and (current['EMA_Fast'] > current['EMA_Slow'])
             fast_cross_down = (prev['EMA_Fast'] >= prev['EMA_Slow']) and (current['EMA_Fast'] < current['EMA_Slow'])
             
+            # Trend Strength Filter: EMA gap should be widening or at least significant
+            curr_gap = abs(current['EMA_Fast'] - current['EMA_Slow'])
+            prev_gap = abs(prev['EMA_Fast'] - prev['EMA_Slow'])
+            is_trending_strong = curr_gap > prev_gap # Gap is widening
+
             # Overextension Filter: Don't buy/sell if price is too far from EMA_Slow
-            # Dist > 2.5 * ATR is usually overextended on M1
             atr = current['ATR']
             dist_from_ema = abs(current['close'] - current['EMA_Slow'])
             is_overextended = dist_from_ema > (2.0 * atr)
 
-            # Candle Confirmation (Price action)
+            # Candle Confirmation
             is_bullish_candle = current['close'] > current['open']
             is_bearish_candle = current['close'] < current['open']
             
-            # BUY SIGNAL: H1 Up + M1 Up + Cross Up + Bullish Candle + RSI Momentum + NOT overextended
-            if (h1_uptrend and ltf_uptrend and fast_cross_up and not is_overextended and
-                is_bullish_candle and current['RSI'] > 50 and current['RSI'] < 75):
+            # Symbol-Specific SL Multiplier
+            # GBPUSD needs more room due to volatility
+            sl_mult = 3.5 if symbol == "GBPUSD" else 2.0
+            
+            # BUY SIGNAL
+            if (h1_uptrend and ltf_uptrend and fast_cross_up and is_trending_strong and
+                not is_overextended and is_bullish_candle and 
+                current['RSI'] > 50 and current['RSI'] < 75):
                 signal = 'BUY'
-                sl_price = current['low'] - (2.0 * atr) 
+                sl_price = current['low'] - (sl_mult * atr) 
                 risk_dist = current['close'] - sl_price
-                tp_price = current['close'] + (risk_dist * 0.8) # Even tighter TP for high winrate
+                tp_price = current['close'] + (risk_dist * 0.7) # Faster TP for GBPUSD
 
-            # SELL SIGNAL: H1 Down + M1 Down + Cross Down + Bearish Candle + RSI Momentum + NOT overextended
-            elif (h1_downtrend and ltf_downtrend and fast_cross_down and not is_overextended and
-                  is_bearish_candle and current['RSI'] < 50 and current['RSI'] > 25):
+            # SELL SIGNAL
+            elif (h1_downtrend and ltf_downtrend and fast_cross_down and is_trending_strong and
+                  not is_overextended and is_bearish_candle and 
+                  current['RSI'] < 50 and current['RSI'] > 25):
                 signal = 'SELL'
-                sl_price = current['high'] + (2.0 * atr)
+                sl_price = current['high'] + (sl_mult * atr)
                 risk_dist = sl_price - current['close']
-                tp_price = current['close'] - (risk_dist * 0.8) # Even tighter TP for high winrate
+                tp_price = current['close'] - (risk_dist * 0.7) # Faster TP for GBPUSD
 
             if signal:
                 sl_dist = abs(current['close'] - sl_price)
@@ -116,7 +126,7 @@ class Strategy:
                 point = sym_info.point if sym_info else 0.0001
                 sl_pips = sl_dist / (point * 10) 
 
-                logger.info(f"SIGNAL {signal} for {symbol} confirmed. Dist: {dist_from_ema:.5f}, ATR: {atr:.5f}")
+                logger.info(f"SIGNAL {signal} for {symbol} confirmed. Dist: {dist_from_ema:.5f}, ATR: {atr:.5f}, SL_Mult: {sl_mult}")
                 return {
                     'signal': signal,
                     'sl': sl_price,
